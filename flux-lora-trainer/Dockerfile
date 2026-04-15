@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.10 python3.10-dev python3-pip \
         git git-lfs curl wget unzip tar \
         libgl1 libglib2.0-0 libsm6 libxrender1 libxext6 \
+        libopenblas-dev liblapack-dev \
         build-essential ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
