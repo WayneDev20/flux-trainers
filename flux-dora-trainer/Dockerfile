@@ -93,6 +93,7 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
     pillow==10.4.0 \
     numpy==1.26.0 \
+    scipy==1.13.1 \
     opencv-python-headless==4.10.0.84 \
     scikit-image==0.24.0 \
     scikit-learn>=1.3.2 \
