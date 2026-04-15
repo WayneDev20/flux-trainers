@@ -10,10 +10,6 @@ on:
       - '.github/workflows/build.yml'
   workflow_dispatch:   # allow manual trigger from GitHub UI
 
-env:
-  REGISTRY: ghcr.io
-  OWNER: ${{ github.repository_owner }}
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,11 +17,11 @@ jobs:
       matrix:
         include:
           - context: flux-lora-trainer
-            image: ghcr.io/${{ github.repository_owner }}/flux-lora-trainer
+            name: flux-lora-trainer
           - context: flux-dora-trainer
-            image: ghcr.io/${{ github.repository_owner }}/flux-dora-trainer
+            name: flux-dora-trainer
           - context: flux-dreambooth-trainer
-            image: ghcr.io/${{ github.repository_owner }}/flux-dreambooth-trainer
+            name: flux-dreambooth-trainer
 
     permissions:
       contents: read
@@ -34,6 +30,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set lowercase image name
+        id: img
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "tag=ghcr.io/${OWNER}/${{ matrix.name }}:latest" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -51,6 +53,6 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/amd64
           push: true
-          tags: ${{ matrix.image }}:latest
+          tags: ${{ steps.img.outputs.tag }}
           cache-from: type=gha,scope=${{ matrix.context }}
           cache-to: type=gha,mode=max,scope=${{ matrix.context }}
