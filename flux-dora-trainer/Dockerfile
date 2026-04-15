@@ -107,6 +107,8 @@ RUN pip install --no-cache-dir \
 # 5. ai-toolkit extras + misc
 # ---------------------------------------------------------------------------
 RUN pip install --no-cache-dir \
+    "scipy==1.13.1" \
+    "numpy==1.26.0" \
     einops==0.8.0 \
     omegaconf==2.3.0 \
     pyyaml==6.0.1 \
@@ -114,10 +116,10 @@ RUN pip install --no-cache-dir \
     toml==0.10.2 \
     flatten_json==0.1.14 \
     tensorboard==2.17.0 \
-    controlnet_aux==0.0.7 \
-    k-diffusion \
-    invisible-watermark \
-    pytorch_fid \
+    "controlnet_aux==0.0.7" \
+    "k-diffusion==0.1.1.post1" \
+    "invisible-watermark==0.2.0" \
+    "pytorch_fid==0.3.0" \
     python-dotenv \
     wandb==0.17.8 \
     Pygments==2.16.1 \
