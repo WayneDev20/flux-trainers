@@ -1,0 +1,56 @@
+name: Build & Push Trainer Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flux-lora-trainer/**'
+      - 'flux-dora-trainer/**'
+      - 'flux-dreambooth-trainer/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - context: flux-lora-trainer
+            image: ghcr.io/${{ github.repository_owner }}/flux-lora-trainer
+          - context: flux-dora-trainer
+            image: ghcr.io/${{ github.repository_owner }}/flux-dora-trainer
+          - context: flux-dreambooth-trainer
+            image: ghcr.io/${{ github.repository_owner }}/flux-dreambooth-trainer
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.context }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.context }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.context }}

@@ -1,0 +1,12 @@
+*.zip
+*.tar
+*.tar.gz
+FLUX.1-dev/
+output/
+input_images/
+class_images/
+__pycache__/
+*.pyc
+*.pth
+.vastai_last_instance
+trained-model*.tar
