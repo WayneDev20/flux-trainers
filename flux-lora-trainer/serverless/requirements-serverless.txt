@@ -31,3 +31,8 @@ ujson==5.10.0
 
 # Pin last to survive anything else's transitive lift.
 pydantic==1.10.17
+
+# numpy must stay on 1.x: deepspeed==0.9.5's autotuning/scheduler.py does
+# `from numpy import BUFSIZE`, which numpy 2.0 removed. LLaVA's install in the
+# base image silently lifts numpy to 2.2.6, so we force it back down here.
+numpy==1.26.0

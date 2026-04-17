@@ -51,8 +51,9 @@ ARG FLUX_WEIGHTS_VERSION=v1
 COPY serverless/requirements-serverless.txt /tmp/requirements-serverless.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r /tmp/requirements-serverless.txt \
-    && pip install --no-cache-dir --force-reinstall "pydantic==1.10.17" \
+    && pip install --no-cache-dir --force-reinstall "pydantic==1.10.17" "numpy==1.26.0" \
     && python -c "import pydantic; assert pydantic.VERSION.startswith('1.'), pydantic.VERSION" \
+    && python -c "import numpy; assert numpy.__version__.startswith('1.26'), numpy.__version__" \
     && python -c "from deepspeed import DeepSpeedEngine" \
     && rm /tmp/requirements-serverless.txt
 
