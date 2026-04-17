@@ -1,0 +1,8 @@
+# Serverless-layer deps only. Base image already has torch/diffusers/ai-toolkit.
+# Pin everything — we're chasing parity, not freshness.
+runpod==1.7.2
+boto3==1.35.20
+botocore==1.35.20
+requests==2.32.3
+jsonschema==4.23.0
+sentry-sdk==2.14.0

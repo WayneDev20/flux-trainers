@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.7
+# ============================================================
+# RunPod Serverless image — thin layer on flux-lora-trainer base.
+#
+# Base image already has:
+#   - torch 2.4.1 / CUDA 12.4
+#   - diffusers 0.30.0 / transformers 4.44.0 / accelerate 0.33.0
+#   - ai-toolkit (patched scheduler for cosine_with_min_lr)
+#   - LLaVA + supporting files
+#   - /workspace/train.py
+#   - pget
+#
+# This layer adds:
+#   - runpod, boto3, requests, jsonschema, sentry-sdk
+#   - the serverless/ package (handler + helpers)
+#   - pinned FLUX weight manifest (source of truth for parity)
+#
+# Build (from repo root, NOT serverless/):
+#   docker build \
+#     -f serverless/Dockerfile.runpod \
+#     --build-arg BASE_IMAGE=ghcr.io/<org>/flux-lora-trainer:latest \
+#     --build-arg GIT_SHA=$(git rev-parse --short HEAD) \
+#     -t ghcr.io/<org>/flux-lora-trainer-runpod:v1 \
+#     .
+#
+# Push:
+#   docker push ghcr.io/<org>/flux-lora-trainer-runpod:v1
+#
+# Deploy (see ADR-0001 action items for runpodctl invocation).
+#   - GPU: A100 80GB (upgrade to H100/H200 later)
+#   - Network Volume mounted at /workspace/FLUX.1-dev (populated via
+#     `python -m serverless.mirror_flux_weights --also-write-local ...`)
+#   - executionTimeout: 3600  •  maxRetries: 2  •  min_workers: 0
+# ============================================================
+
+ARG BASE_IMAGE=ghcr.io/replace-me/flux-lora-trainer:latest
+FROM ${BASE_IMAGE}
+
+ARG GIT_SHA=unknown
+ARG FLUX_WEIGHTS_VERSION=v1
+
+# ------------------------------------------------------------------
+# Serverless deps. Use BuildKit cache for pip to speed reruns.
+# ------------------------------------------------------------------
+COPY serverless/requirements-serverless.txt /tmp/requirements-serverless.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir -r /tmp/requirements-serverless.txt \
+    && rm /tmp/requirements-serverless.txt
+
+# ------------------------------------------------------------------
+# Copy the whole serverless/ package so submodule imports resolve.
+# Exclude tests via .dockerignore.
+# ------------------------------------------------------------------
+COPY serverless/ /workspace/serverless/
+
+# PYTHONPATH must include /workspace so `import serverless.handler` works
+# when RunPod invokes via `python -m serverless.handler`.
+ENV PYTHONPATH=/workspace \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    GIT_SHA=${GIT_SHA} \
+    FLUX_WEIGHTS_VERSION=${FLUX_WEIGHTS_VERSION} \
+    FLUX_WEIGHTS_DIR=/workspace/FLUX.1-dev
+
+# RunPod expects the handler process to be the container foreground.
+# `-m` ensures relative imports inside serverless/ work correctly.
+ENTRYPOINT []
+CMD ["python", "-u", "-m", "serverless.handler"]

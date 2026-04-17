@@ -10,3 +10,4 @@ __pycache__/
 *.pth
 .vastai_last_instance
 trained-model*.tar
+.wrangler/

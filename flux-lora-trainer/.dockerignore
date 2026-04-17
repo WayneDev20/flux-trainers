@@ -1,0 +1,26 @@
+# Exclude from Docker build context — keeps layer small, tests + local caches out.
+.git
+.claude
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+adr/
+serverless/tests/
+tests/
+tools/
+*.md
+!serverless/DESIGN.md
+# node_modules not expected, but belt-and-suspenders
+node_modules
+# never bake local weight caches
+FLUX.1-dev/
+flux-cache/
+*.safetensors
+*.tar
+*.zip
