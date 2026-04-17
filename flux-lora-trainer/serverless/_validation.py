@@ -130,13 +130,20 @@ def check_captions_complete(
     captions: dict[str, str] | None,
 ) -> None:
     """
-    ADR-0004:
-      captions absent     -> handler relies on --autocaption (caller's choice)
+    ADR-0004 (revised): captions are required.
+
+      captions absent     -> EXIT_BAD_REQUEST (was autocaption fallback —
+                             LLaVA removed from base image; captioning is
+                             owned by tools/caption_dataset.py in the backend)
       captions present    -> must cover every image, case-insensitive match
-      partial captions    -> abort with EXIT_PARTIAL_CAPS (no silent autocaption)
+      partial captions    -> abort with EXIT_PARTIAL_CAPS
     """
     if captions is None:
-        return  # autocaption path — handler signals --autocaption later
+        raise ValidationError(
+            "captions field is required (autocaption fallback removed; "
+            "caller must pre-caption via tools/caption_dataset.py)",
+            exit_code=EXIT_BAD_REQUEST,
+        )
 
     cap_keys = {k.lower() for k in captions.keys()}
     missing = [img for img in image_names if img.lower() not in cap_keys]

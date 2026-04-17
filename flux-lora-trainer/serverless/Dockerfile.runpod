@@ -6,8 +6,7 @@
 #   - torch 2.4.1 / CUDA 12.4
 #   - diffusers 0.30.0 / transformers 4.44.0 / accelerate 0.33.0
 #   - ai-toolkit (patched scheduler for cosine_with_min_lr)
-#   - LLaVA + supporting files
-#   - /workspace/train.py
+#   - /workspace/train.py (no LLaVA / deepspeed — see base Dockerfile header)
 #   - pget
 #
 # This layer adds:
@@ -42,19 +41,16 @@ ARG FLUX_WEIGHTS_VERSION=v1
 # ------------------------------------------------------------------
 # Serverless deps. Use BuildKit cache for pip to speed reruns.
 #
-# Note: the force-reinstall of pydantic==1.10.17 at the end is belt-and-
-# suspenders — the requirements file already pins it, but if any future
-# transitive quietly lifts pydantic to v2, deepspeed 0.9.5 will blow up at
-# import time (pydantic v2 rejects `@root_validator` without
-# skip_on_failure=True). Fail loud at build, not at training start.
+# Build-time guard: assert LLaVA / deepspeed are absent. The base image
+# used to ship them and they pulled an entire fragile dep regime (pydantic
+# v1 pin, numpy <2 pin) with them. If a future upstream bump ever drags
+# them back in, fail the image build instead of discovering it at training
+# time after we've paid for a cold-start GPU.
 # ------------------------------------------------------------------
 COPY serverless/requirements-serverless.txt /tmp/requirements-serverless.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r /tmp/requirements-serverless.txt \
-    && pip install --no-cache-dir --force-reinstall "pydantic==1.10.17" "numpy==1.26.0" \
-    && python -c "import pydantic; assert pydantic.VERSION.startswith('1.'), pydantic.VERSION" \
-    && python -c "import numpy; assert numpy.__version__.startswith('1.26'), numpy.__version__" \
-    && python -c "from deepspeed import DeepSpeedEngine" \
+    && python -c "import importlib.util as u, sys; [sys.exit(f'{m} is installed — must be absent') for m in ('llava','deepspeed') if u.find_spec(m) is not None]" \
     && rm /tmp/requirements-serverless.txt
 
 # ------------------------------------------------------------------

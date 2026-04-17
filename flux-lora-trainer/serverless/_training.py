@@ -38,7 +38,7 @@ def build_argv(
     *,
     input_zip: Path,
     trigger_word: str,
-    captions_provided: bool,
+    captions_provided: bool,  # retained for call-site compatibility; no-op
     train_py: Path = TRAIN_PY,
     python: str = sys.executable,
 ) -> list[str]:
@@ -46,10 +46,14 @@ def build_argv(
     Construct argv for train.py from the validated 8-knob config{}.
     Schema guarantees all 8 keys exist — no `.get(..., default)` needed.
 
-    captions_provided=False -> pass --autocaption so ai-toolkit's LLaVA
-    captioner runs as the documented fallback (ADR-0004).
+    Captions are expected to be present as <stem>.txt alongside each image
+    in the dataset zip. The handler injects them from the request's
+    `captions` map before calling train.py. LLaVA's in-process autocaption
+    fallback was removed — see ADR-0004 revision log and the base
+    Dockerfile header.
     """
-    argv = [
+    del captions_provided  # signal that we intentionally ignore this
+    return [
         python, str(train_py),
         "--input_images",  str(input_zip),
         "--trigger_word",  trigger_word,
@@ -61,8 +65,6 @@ def build_argv(
         "--optimizer",             config["optimizer"],
         "--caption_dropout_rate",  str(config["caption_dropout_rate"]),
     ]
-    argv.append("--autocaption" if not captions_provided else "--no-autocaption")
-    return argv
 
 
 def _classify_error(stderr_tail: str) -> tuple[bool, str]:

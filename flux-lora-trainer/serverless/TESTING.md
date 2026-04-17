@@ -28,8 +28,8 @@ manually before any RunPod endpoint promotion.
 | `_sign_webhook(body, secret)` | Deterministic HMAC-SHA256; stable across reruns; rejects empty secret |
 | `_verify_webhook(body, sig, secret)` | Round-trip with `_sign_webhook`; detect bit flips |
 | `_verify_sha256(path, expected)` | Match + mismatch; missing file → FileNotFoundError not silently pass |
-| `_check_captions_complete(zip_path, captions_dict)` | All-present ok; one-missing abort; extra-key ok (ignored) |
-| `_build_train_argv(config, paths)` | Correct flags from `config{}`; defaults when omitted; `--autocaption` iff captions absent |
+| `_check_captions_complete(zip_path, captions_dict)` | All-present ok; one-missing abort; `None` abort (captions required); extra-key ok (ignored) |
+| `_build_train_argv(config, paths)` | Correct flags from `config{}`; no autocaption flags (LLaVA removed) |
 | `_artifact_keys(user_id, job_id)` | Stable R2 path construction; no injection via user_id |
 | `_manifest_body(...)` | Includes `weights_version`, `job_id`, `git_sha`, timing; valid JSON |
 | `_classify_train_error(stderr)` | Maps "CUDA out of memory" → `oom=true`; unknown → generic |

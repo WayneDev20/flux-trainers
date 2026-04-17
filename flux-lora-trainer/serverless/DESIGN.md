@@ -25,8 +25,12 @@ inference. ADRs 0001–0005 are inputs to this document.
   }
 }
 ```
-Rationale for the 8-knob surface → ADR-0004. Missing `captions` → autocaption
-fallback. Partial `captions` → abort exit 3.
+Rationale for the 8-knob surface → ADR-0004. `captions` is **required**: the
+in-process LLaVA autocaption fallback was removed from the base image (it
+dragged a fragile dep regime — pydantic v1 + numpy <2 — with it). Captioning
+is owned by `tools/caption_dataset.py` in avatar-backend (Claude Sonnet
+primary, GPT / Gemini fallback). Missing `captions` → exit 4. Partial
+`captions` → exit 3.
 
 **Webhook** (HMAC-SHA256 signed, `X-Signature` header; ADR-0005):
 ```json
@@ -57,9 +61,10 @@ RunPod input
 [4] download dataset.zip           ── boto3 get_object → /tmp/<job_id>.zip
     │
     ▼
-[5] write caption .txt files       ── if captions{} provided; else rely on --autocaption
-    │                                 (train.py extracts zip into INPUT_DIR/; captions
-    │                                  are written there after extraction)
+[5] write caption .txt files       ── captions{} required; rebuild zip with
+    │                                 <stem>.txt entries so train.py's
+    │                                 extract_zip places them in INPUT_DIR/
+    │                                 alongside their images
     ▼
 [6] subprocess train.py            ── argparse flags built from config{}
     │                                 stdout/stderr streamed with job_id prefix
@@ -76,7 +81,7 @@ RunPod input
 | Mode | Detect | Exit | Recovery |
 |------|--------|------|----------|
 | Bad FLUX SHA | SHA256 mismatch on boot | 2 | Abort. Alert — weights corrupted or version drift |
-| Schema violation / bad R2 key | jsonschema + `_validate_r2_key()` | 4 | Client bug. Webhook `failed`; no retry |
+| Schema violation / bad R2 key / missing captions | jsonschema + `_validate_r2_key()` | 4 | Client bug. Webhook `failed`; no retry |
 | Partial captions | set diff vs. zip contents | 3 | Client bug. Webhook `failed`; no retry |
 | R2 read fail (dataset) | boto3 ClientError | 5 | Retry 3× internally; then `failed` |
 | train.py crash | non-zero returncode | 6 | Capture last 200 stderr lines into manifest; `failed`. Backend may retry |

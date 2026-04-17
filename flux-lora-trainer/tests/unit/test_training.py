@@ -28,25 +28,18 @@ class TestBuildArgv:
                   "--optimizer", "--caption_dropout_rate"):
             assert f in argv
 
-    def test_captions_provided_disables_autocaption(self, valid_request):
-        argv = build_argv(
-            valid_request["config"],
-            input_zip=Path("/tmp/x.zip"),
-            trigger_word="TOK",
-            captions_provided=True,
-        )
-        assert "--no-autocaption" in argv
-        assert "--autocaption" not in argv
-
-    def test_captions_absent_enables_autocaption(self, valid_request):
-        argv = build_argv(
-            valid_request["config"],
-            input_zip=Path("/tmp/x.zip"),
-            trigger_word="TOK",
-            captions_provided=False,
-        )
-        assert "--autocaption" in argv
-        assert "--no-autocaption" not in argv
+    def test_no_autocaption_flags_emitted(self, valid_request):
+        """LLaVA was removed; argv must never mention autocaption regardless
+        of captions_provided. The kwarg is kept only for call-site compat."""
+        for provided in (True, False):
+            argv = build_argv(
+                valid_request["config"],
+                input_zip=Path("/tmp/x.zip"),
+                trigger_word="TOK",
+                captions_provided=provided,
+            )
+            assert "--autocaption" not in argv
+            assert "--no-autocaption" not in argv
 
     def test_values_pass_through(self, valid_request):
         argv = build_argv(

@@ -9,7 +9,7 @@ Flow (DESIGN.md §2):
     [2] idempotency probe          -> exit 0 if LoRA already at output prefix
     [3] SHA-verify FLUX weights    -> exit 2 on mismatch
     [4] download dataset zip       -> exit 5 on R2 read fail
-    [5] write caption .txt files   -> exit 3 on partial captions
+    [5] write caption .txt files   -> exit 4 on missing, exit 3 on partial
     [6] subprocess train.py        -> exit 6 on non-zero
     [7] upload artifacts           -> exit 7 on R2 write fail
     [8] POST HMAC-signed webhook   -> exit 0 (webhook fail is non-fatal, state in R2)
@@ -164,25 +164,22 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             image_names = list_images_in_zip(dataset_zip)
             if not image_names:
                 raise ValidationError("dataset zip contains no recognized images")
-            captions = req.get("captions")  # may be None -> autocaption path
+            captions = req["captions"]  # required (ADR-0004 revised)
             check_captions_complete(image_names, captions)
 
             # train.py extracts the zip into INPUT_DIR on launch. We can't
             # pre-seed .txt files there yet. Instead we inject captions by
             # rebuilding the zip with matching .txt entries inside it — then
             # train.py's extract_zip puts them alongside the images.
-            if captions is not None:
-                dataset_zip = _inject_caption_txt(dataset_zip, captions, workdir)
-            _stage(job_id, "captions.written",
-                   count=len(captions) if captions else 0,
-                   autocaption=captions is None)
+            dataset_zip = _inject_caption_txt(dataset_zip, captions, workdir)
+            _stage(job_id, "captions.written", count=len(captions))
 
             # ── [6] train ────────────────────────────────────────────────────
             argv = _training.build_argv(
                 req["config"],
                 input_zip=dataset_zip,
                 trigger_word=req["trigger_word"],
-                captions_provided=captions is not None,
+                captions_provided=True,
             )
 
             def _progress(tail: str) -> None:

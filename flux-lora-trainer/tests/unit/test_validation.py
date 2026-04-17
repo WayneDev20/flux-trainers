@@ -94,10 +94,12 @@ class TestParseRequest:
         with pytest.raises(ValidationError):
             parse_request(r, schema_path)
 
-    def test_captions_optional(self, valid_request, schema_path):
+    def test_captions_required(self, valid_request, schema_path):
+        # ADR-0004 revised: captions is required at schema level.
         r = copy.deepcopy(valid_request)
         del r["captions"]
-        parse_request(r, schema_path)  # no raise
+        with pytest.raises(ValidationError):
+            parse_request(r, schema_path)
 
 
 # ── list_images_in_zip + check_captions_complete ────────────────────────────
@@ -117,8 +119,11 @@ class TestCaptions:
             check_captions_complete(["a.jpg", "b.jpg"], {"a.jpg": "x"})
         assert ei.value.exit_code == EXIT_PARTIAL_CAPS
 
-    def test_captions_none_allows_autocaption(self):
-        check_captions_complete(["a.jpg"], None)  # no raise
+    def test_captions_none_raises_bad_request(self):
+        # ADR-0004 revised: LLaVA removed, captions are required.
+        with pytest.raises(ValidationError) as ei:
+            check_captions_complete(["a.jpg"], None)
+        assert ei.value.exit_code == EXIT_BAD_REQUEST
 
     def test_extra_captions_ignored(self):
         check_captions_complete(["a.jpg"], {"a.jpg": "x", "b.jpg": "y"})

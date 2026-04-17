@@ -7,20 +7,14 @@ requests==2.32.3
 jsonschema==4.23.0
 sentry-sdk==2.14.0
 
-# The base image pins pydantic==1.10.17 because deepspeed==0.9.5 (LLaVA
-# captioner dep) uses `@root_validator` without `skip_on_failure=True`, which
-# pydantic v2 rejects. That import is triggered eagerly by
-# `accelerate.utils.other` when train.py imports SDTrainer, so pydantic v2 is a
-# hard no for this image.
-#
-# runpod 1.7.2 declares fastapi[all]>=0.94.0 with a loose graph, so we also need
-# transitive pins to keep pip's 2020 resolver from backtracking for 40 minutes
-# into `resolution-too-deep`. Everything below is chosen to be
-# pydantic-v1-compatible (fastapi<0.100) and to fully saturate the ambiguous
-# parts of the graph.
-fastapi==0.99.1
-uvicorn[standard]==0.27.1
-starlette==0.27.0
+# runpod 1.7.2 declares fastapi[all]>=0.94.0 with a loose graph. Without
+# these lower bounds pip's 2020 resolver backtracks for 40 minutes into
+# `resolution-too-deep` trying to reconcile fastapi-cli, email-validator,
+# dnspython, sniffio, etc. Pinning the biggest offenders collapses the
+# search space and makes installs deterministic.
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+fastapi-cli==0.0.5
 email-validator==2.2.0
 dnspython==2.7.0
 sniffio==1.3.1
@@ -28,11 +22,3 @@ exceptiongroup==1.2.2
 python-multipart==0.0.12
 orjson==3.10.7
 ujson==5.10.0
-
-# Pin last to survive anything else's transitive lift.
-pydantic==1.10.17
-
-# numpy must stay on 1.x: deepspeed==0.9.5's autotuning/scheduler.py does
-# `from numpy import BUFSIZE`, which numpy 2.0 removed. LLaVA's install in the
-# base image silently lifts numpy to 2.2.6, so we force it back down here.
-numpy==1.26.0

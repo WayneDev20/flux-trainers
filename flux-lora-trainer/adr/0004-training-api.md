@@ -98,3 +98,39 @@ beat silent quality loss.
 4. [ ] Ship `tools/caption_dataset.py` (Anthropic API, prompt caching, writes `captions.json`)
 5. [ ] Document the prompt in `tools/prompts/describe_identity.md` (version-pinned)
 6. [ ] Phase 2: avatar-backend integrates the same captioning module as a library
+
+## Revision log
+
+### 2026-04-17 — `captions` is now REQUIRED; LLaVA autocaption fallback removed
+
+The "autocaption fallback when `captions` is absent" path has been deleted.
+
+**Why:** the base image's LLaVA install pulled a fragile dep regime —
+pydantic v1 pin (conflicted with fastapi 0.115 in the serverless layer) and
+numpy <2 pin (deepspeed's `from numpy import BUFSIZE` breaks on numpy 2.x).
+Two full CI rebuilds (+ one GPU-billed training run that OOM'd at
+import-time) were burned on resolving those conflicts. The autocaption
+fallback was never actually exercised in production — avatar-backend always
+pre-captions — so it was paying ongoing complexity tax for zero value.
+
+**What changed:**
+- `Dockerfile` no longer installs LLaVA / deepspeed / einops-exts / etc.
+- `train.py` no longer imports `Captioner` or accepts `--autocaption*` args.
+- `serverless/_validation.py::check_captions_complete` now raises
+  `ValidationError(EXIT_BAD_REQUEST)` when `captions is None`.
+- `serverless/schemas/request.v1.json` lists `captions` in `required`.
+- `serverless/Dockerfile.runpod` has a build-time guard that fails the
+  image build if `llava` or `deepspeed` ever reappear in the base.
+
+**Caption prompt** also revised from "describe everything including
+identity markers" to "describe only variable-at-inference attributes"
+(background, clothing, accessories, pose, framing, lighting). Identity
+features (skin, hair, face, build) are intentionally *omitted* from
+captions so the LoRA learns to bake them into the trigger token rather
+than leaving them dangling as VLM-controllable dials. See
+`tools/prompts/describe_identity.md` v2.
+
+**Migration for callers:** none — avatar-backend already pre-captions via
+`tools/caption_dataset.py`, so the request payload shape is unchanged for
+real traffic. Manual testers who previously submitted without `captions`
+now get exit 4 instead of a slow LLaVA fallback.

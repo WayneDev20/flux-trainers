@@ -4,7 +4,7 @@
   "title": "FLUX LoRA training request (v1)",
   "description": "Frozen request contract per ADR-0004. Bump to v2/ for breaking changes.",
   "type": "object",
-  "required": ["job_id", "user_id", "dataset_r2_key", "trigger_word", "config"],
+  "required": ["job_id", "user_id", "dataset_r2_key", "trigger_word", "captions", "config"],
   "additionalProperties": false,
   "properties": {
     "job_id": {
@@ -24,7 +24,8 @@
     },
     "captions": {
       "type": "object",
-      "description": "Optional. Map filename -> caption. If omitted entirely, autocaption fallback kicks in. If present, MUST cover every image in the zip (ADR-0004).",
+      "minProperties": 1,
+      "description": "Required. Map filename -> caption. MUST cover every image in the zip (ADR-0004 revised — LLaVA in-process autocaption removed; captioning is owned by tools/caption_dataset.py in avatar-backend).",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,

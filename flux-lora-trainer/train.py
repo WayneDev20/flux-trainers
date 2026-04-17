@@ -25,16 +25,13 @@ os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 import sys
 
-# ── paths must be set before any ai-toolkit / LLaVA imports ──────────────────
+# ── paths must be set before any ai-toolkit imports ─────────────────────────
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 AI_TOOLKIT = SCRIPT_DIR / "ai-toolkit"
-LLAVA_DIR  = SCRIPT_DIR / "LLaVA"
 
 sys.path.insert(0, str(AI_TOOLKIT))
-if LLAVA_DIR.exists():
-    sys.path.insert(0, str(LLAVA_DIR))
 
 # Patch submodules the same way upstream does (fixes ai-toolkit internals)
 try:
@@ -61,7 +58,6 @@ from huggingface_hub import HfApi
 from jobs import BaseJob
 from toolkit.config import get_config
 
-from caption import Captioner
 from wandb_client import WeightsAndBiasesClient, logout_wandb
 from layer_match import match_layers_to_optimize, available_layers_to_optimize
 
@@ -438,9 +434,6 @@ def train(args):
     if args.wandb_api_key:
         wandb_config = {
             "trigger_word":         args.trigger_word,
-            "autocaption":          args.autocaption,
-            "autocaption_prefix":   args.autocaption_prefix,
-            "autocaption_suffix":   args.autocaption_suffix,
             "steps":                args.steps,
             "learning_rate":        args.learning_rate,
             "batch_size":           args.batch_size,
@@ -468,15 +461,10 @@ def train(args):
     if not args.trigger_word:
         del train_config["config"]["process"][0]["trigger_word"]
 
-    # ── 10. Auto-caption with LLaVA v1.5 13B ─────────────────────────────────
-    # Matches upstream: check first, load models only if needed, then caption
-    captioner = Captioner()
-    if args.autocaption and not captioner.all_images_are_captioned(INPUT_DIR):
-        captioner.load_models()
-        captioner.caption_images(INPUT_DIR, args.autocaption_prefix, args.autocaption_suffix)
-
-    del captioner
-    torch.cuda.empty_cache()
+    # ── 10. Captions must already be present as <stem>.txt alongside images. ─
+    # Captioning is owned by tools/caption_dataset.py (Claude/GPT/Gemini via
+    # API). If a .txt is missing, ai-toolkit's dataset loader will train with
+    # only the trigger token for that image — still valid, just weaker signal.
 
     # ── 11. Run training ──────────────────────────────────────────────────────
     log.info("Starting train job")
@@ -585,13 +573,6 @@ def parse_args():
     p.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction,
                    default=False,
                    help="Auto-enabled when GPU < 100 GB (i.e. always on normal GPUs).")
-
-    # Captioning
-    p.add_argument("--autocaption",   action=argparse.BooleanOptionalAction, default=True)
-    p.add_argument("--autocaption_prefix", default=None,
-                   help="Prefix for all captions, e.g. 'a photo of TOK, '.")
-    p.add_argument("--autocaption_suffix", default=None,
-                   help="Suffix for all captions, e.g. ' in the style of TOK'.")
 
     # HuggingFace
     p.add_argument("--hf_repo_id", default=None,
