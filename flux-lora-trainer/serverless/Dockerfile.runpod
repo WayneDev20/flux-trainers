@@ -41,10 +41,19 @@ ARG FLUX_WEIGHTS_VERSION=v1
 
 # ------------------------------------------------------------------
 # Serverless deps. Use BuildKit cache for pip to speed reruns.
+#
+# Note: the force-reinstall of pydantic==1.10.17 at the end is belt-and-
+# suspenders — the requirements file already pins it, but if any future
+# transitive quietly lifts pydantic to v2, deepspeed 0.9.5 will blow up at
+# import time (pydantic v2 rejects `@root_validator` without
+# skip_on_failure=True). Fail loud at build, not at training start.
 # ------------------------------------------------------------------
 COPY serverless/requirements-serverless.txt /tmp/requirements-serverless.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r /tmp/requirements-serverless.txt \
+    && pip install --no-cache-dir --force-reinstall "pydantic==1.10.17" \
+    && python -c "import pydantic; assert pydantic.VERSION.startswith('1.'), pydantic.VERSION" \
+    && python -c "from deepspeed import DeepSpeedEngine" \
     && rm /tmp/requirements-serverless.txt
 
 # ------------------------------------------------------------------
