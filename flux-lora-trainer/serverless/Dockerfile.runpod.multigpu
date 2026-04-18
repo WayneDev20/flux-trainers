@@ -63,10 +63,23 @@ RUN rm -rf /workspace/ai-toolkit \
 
 # ------------------------------------------------------------------
 # 2. Upgrade deps needed by FSDP v2.
-#    accelerate 1.x is required for fsdp_version=2 API.
-#    transformers 4.57.3 matches PR #774's requirements_base.txt.
-#    torchao is a hard dep of the FSDP branch requirements_base.txt.
+#    - torch>=2.6 is a hard prerequisite (accelerate's FSDP2 plugin
+#      raises ImportError otherwise — see accelerate/utils/dataclasses.py
+#      __post_init__ check against FSDP2_PYTORCH_VERSION).
+#      Base image ships torch 2.4.1; we bump to 2.6.0 + matching
+#      torchvision 0.21.0 on the cu124 wheel index (same CUDA the base
+#      image was built against, so driver/runtime pairing is preserved).
+#    - accelerate 1.x is required for fsdp_version=2 API.
+#    - transformers 4.57.3 matches PR #774's requirements_base.txt.
+#    - torchao is a hard dep of the FSDP branch requirements_base.txt;
+#      0.10.0 is the first release cut against torch 2.6.
 # ------------------------------------------------------------------
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir --upgrade \
+        --index-url https://download.pytorch.org/whl/cu124 \
+        --extra-index-url https://pypi.org/simple \
+        "torch==2.6.0" "torchvision==0.21.0"
+
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir --upgrade \
         "accelerate>=1.1,<2.0" \
