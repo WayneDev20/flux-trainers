@@ -90,6 +90,21 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "transformers==4.57.3" \
         "torchao==0.10.0"
 
+# Install the full FSDP-branch requirements_base.txt. Pins we care about
+# (transformers, torchao) are already at the right versions above and
+# match what this file declares, so pip will be a no-op on them. The
+# critical adds are:
+#   - diffusers@072d15e (main-ish SHA — provides WanTransformer3DModel
+#     that toolkit/lora_special.py imports; the base image's diffusers
+#     is too old and blows up with ImportError at train.py startup).
+#   - torchcodec, av, pytorch-wavelets, albumentations, etc. that the
+#     FSDP branch references but prod's Dockerfile doesn't install.
+# Letting pip see torch 2.6.0 already installed means requirements_base's
+# unpinned `accelerate` won't downgrade our pinned 1.x.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir \
+        -r /workspace/ai-toolkit/requirements_base.txt
+
 # ------------------------------------------------------------------
 # 3. Re-apply cosine_with_min_lr scheduler patch on the swapped-in
 #    ai-toolkit. Same patch body as base Dockerfile §7. Tolerate the
@@ -285,7 +300,9 @@ assert torchvision.__version__.startswith('0.21.'), f'torchvision={torchvision._
 assert torchaudio.__version__.startswith('2.6.'), f'torchaudio={torchaudio.__version__}'; \
 print(f'torch {torch.__version__} / torchvision {torchvision.__version__} / torchaudio {torchaudio.__version__}')" \
     && python -c "import sys; sys.path.insert(0, '/workspace/ai-toolkit'); \
-from toolkit.config_modules import AdapterConfig; print('ai-toolkit import chain OK')"
+from toolkit.config_modules import AdapterConfig; \
+from extensions_built_in.sd_trainer.SDTrainer import SDTrainer; \
+print('ai-toolkit SDTrainer chain OK (matches train.py line 56 import)')"
 
 ENTRYPOINT []
 CMD ["python", "-u", "-m", "serverless.handler"]
