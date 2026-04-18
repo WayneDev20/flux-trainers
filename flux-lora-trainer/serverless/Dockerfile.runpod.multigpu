@@ -78,7 +78,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 #    ai-toolkit. Same patch body as base Dockerfile §7. Tolerate the
 #    target going missing so a future upstream refactor fails loud.
 # ------------------------------------------------------------------
-RUN python3 - << 'PYEOF'
+RUN python3 <<'PYEOF'
 path = '/workspace/ai-toolkit/toolkit/scheduler.py'
 with open(path) as f:
     content = f.read()
@@ -123,7 +123,7 @@ PYEOF
 #
 #    Single-GPU behavior is unchanged (LOCAL_RANK=0, WORLD_SIZE=1).
 # ------------------------------------------------------------------
-RUN python3 - << 'PYEOF'
+RUN python3 <<'PYEOF'
 path = '/workspace/train.py'
 with open(path) as f:
     content = f.read()
