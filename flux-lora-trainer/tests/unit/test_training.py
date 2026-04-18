@@ -53,6 +53,45 @@ class TestBuildArgv:
         assert argv[argv.index("--lora_rank") + 1] == "32"
         assert argv[argv.index("--optimizer") + 1] == "adamw8bit"
 
+    def test_single_gpu_uses_plain_python(self, valid_request):
+        argv = build_argv(
+            valid_request["config"],
+            input_zip=Path("/z.zip"),
+            trigger_word="TOK",
+            captions_provided=True,
+            num_gpus=1,
+        )
+        assert argv[0] != "accelerate"
+        assert "--multi_gpu" not in argv
+        assert "--num_processes=1" not in argv
+
+    def test_multi_gpu_wraps_with_accelerate_launch(self, valid_request):
+        argv = build_argv(
+            valid_request["config"],
+            input_zip=Path("/z.zip"),
+            trigger_word="TOK",
+            captions_provided=True,
+            num_gpus=2,
+        )
+        assert argv[0] == "accelerate"
+        assert argv[1] == "launch"
+        assert "--num_processes=2" in argv
+        assert "--multi_gpu" in argv
+        assert "--mixed_precision=bf16" in argv
+        # train.py still receives all the same config flags
+        assert argv[argv.index("--trigger_word") + 1] == "TOK"
+        assert argv[argv.index("--lora_rank") + 1] == "32"
+
+    def test_multi_gpu_8x_sets_num_processes_8(self, valid_request):
+        argv = build_argv(
+            valid_request["config"],
+            input_zip=Path("/z.zip"),
+            trigger_word="TOK",
+            captions_provided=True,
+            num_gpus=8,
+        )
+        assert "--num_processes=8" in argv
+
 
 class TestClassifyError:
     def test_oom(self):

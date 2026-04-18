@@ -175,11 +175,22 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             _stage(job_id, "captions.written", count=len(captions))
 
             # ── [6] train ────────────────────────────────────────────────────
+            # Multi-GPU: when RunPod allocates >1 GPU to this worker, wrap
+            # with `accelerate launch` so ai-toolkit's FSDP v2 path triggers.
+            # Single-GPU behavior is unchanged.
+            try:
+                import torch  # imported lazily; handler boot shouldn't need CUDA
+                num_gpus = torch.cuda.device_count()
+            except Exception:
+                num_gpus = 1
+            _stage(job_id, "train.gpu_count", num_gpus=num_gpus)
+
             argv = _training.build_argv(
                 req["config"],
                 input_zip=dataset_zip,
                 trigger_word=req["trigger_word"],
                 captions_provided=True,
+                num_gpus=num_gpus,
             )
 
             def _progress(tail: str) -> None:

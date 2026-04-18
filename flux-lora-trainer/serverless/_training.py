@@ -39,6 +39,7 @@ def build_argv(
     input_zip: Path,
     trigger_word: str,
     captions_provided: bool,  # retained for call-site compatibility; no-op
+    num_gpus: int = 1,
     train_py: Path = TRAIN_PY,
     python: str = sys.executable,
 ) -> list[str]:
@@ -51,10 +52,14 @@ def build_argv(
     `captions` map before calling train.py. LLaVA's in-process autocaption
     fallback was removed — see ADR-0004 revision log and the base
     Dockerfile header.
+
+    When num_gpus > 1 we wrap with `accelerate launch` so ai-toolkit's
+    FSDP v2 path (luke9705 PR #774) triggers: it keys off
+    `Accelerator.num_processes > 1` and shards the frozen FLUX transformer
+    across GPUs while LoRA params stay replicated with synced grads.
     """
     del captions_provided  # signal that we intentionally ignore this
-    return [
-        python, str(train_py),
+    train_args = [
         "--input_images",  str(input_zip),
         "--trigger_word",  trigger_word,
         "--steps",                 str(config["steps"]),
@@ -65,6 +70,16 @@ def build_argv(
         "--optimizer",             config["optimizer"],
         "--caption_dropout_rate",  str(config["caption_dropout_rate"]),
     ]
+    if num_gpus > 1:
+        return [
+            "accelerate", "launch",
+            f"--num_processes={num_gpus}",
+            "--multi_gpu",
+            "--mixed_precision=bf16",
+            str(train_py),
+            *train_args,
+        ]
+    return [python, str(train_py), *train_args]
 
 
 def _classify_error(stderr_tail: str) -> tuple[bool, str]:
