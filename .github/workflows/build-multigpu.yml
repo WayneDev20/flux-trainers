@@ -1,0 +1,64 @@
+name: Build & Push Multi-GPU Trial Image
+
+# Separate from build.yml so the prod image isn't rebuilt on every multigpu
+# tweak. Matches the same Azure runner → GHCR fast-path, but targets only
+# flux-lora-trainer/serverless/Dockerfile.runpod.multigpu.
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'flux-lora-trainer/serverless/Dockerfile.runpod.multigpu'
+      - 'flux-lora-trainer/serverless/_training.py'
+      - 'flux-lora-trainer/serverless/handler.py'
+      - 'flux-lora-trainer/train.py'
+      - '.github/workflows/build-multigpu.yml'
+  workflow_dispatch:
+
+jobs:
+  multigpu:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image names
+        id: img
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "base=ghcr.io/${OWNER}/flux-lora-trainer:latest" >> $GITHUB_OUTPUT
+          echo "tag_sha=ghcr.io/${OWNER}/flux-lora-trainer-runpod:multigpu-${SHA_SHORT}" >> $GITHUB_OUTPUT
+          echo "tag_v1=ghcr.io/${OWNER}/flux-lora-trainer-runpod:multigpu-v1" >> $GITHUB_OUTPUT
+          echo "sha_short=${SHA_SHORT}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multigpu serverless image
+        uses: docker/build-push-action@v5
+        with:
+          context: flux-lora-trainer
+          file: flux-lora-trainer/serverless/Dockerfile.runpod.multigpu
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ steps.img.outputs.base }}
+            GIT_SHA=${{ steps.img.outputs.sha_short }}
+            FLUX_WEIGHTS_VERSION=v1
+          tags: |
+            ${{ steps.img.outputs.tag_v1 }}
+            ${{ steps.img.outputs.tag_sha }}
+          cache-from: type=gha,scope=flux-lora-trainer-runpod-multigpu
+          cache-to: type=gha,mode=max,scope=flux-lora-trainer-runpod-multigpu
