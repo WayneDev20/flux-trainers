@@ -52,6 +52,15 @@ def load_manifest(manifest_path: Path, expected_version: str) -> dict[str, Any]:
     return m
 
 
+_MARKER_NAME = ".verified.json"
+
+
+def _manifest_fingerprint(manifest: dict[str, Any]) -> str:
+    """Stable fingerprint over the files map — independent of key order."""
+    canonical = json.dumps(manifest["files"], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def verify_weights(
     manifest: dict[str, Any],
     weights_dir: Path,
@@ -64,9 +73,42 @@ def verify_weights(
     called to populate any missing file before hashing — used for cold-cold
     starts where the Network Volume hasn't been warmed.
 
+    Fast-path: if `.verified.json` exists in `weights_dir` with the same
+    manifest fingerprint, we trust the previous full SHA sweep and only
+    stat-check that each file still exists with the expected size. This
+    is the difference between a 5s cold-start (fast path) and a ~4 min
+    cold-start (re-hashing 34 GB from a network volume every boot).
+
     Raises WeightParityError on any mismatch or missing file that can't be
     fetched.
     """
+    fingerprint = _manifest_fingerprint(manifest)
+    marker = weights_dir / _MARKER_NAME
+
+    # ── Fast path: marker present + fingerprint match + all files present ──
+    if marker.exists():
+        try:
+            cached = json.loads(marker.read_text())
+        except (json.JSONDecodeError, OSError):
+            cached = {}
+        if cached.get("fingerprint") == fingerprint:
+            all_ok = True
+            for filename, meta in manifest["files"].items():
+                local = weights_dir / filename
+                if not local.exists():
+                    log.info("weights.fastpath.miss file=%s reason=absent", filename)
+                    all_ok = False
+                    break
+                if "bytes" in meta and local.stat().st_size != meta["bytes"]:
+                    log.info("weights.fastpath.miss file=%s reason=size", filename)
+                    all_ok = False
+                    break
+            if all_ok:
+                log.info("weights.fastpath.hit fingerprint=%s", fingerprint[:16])
+                return
+
+    # ── Slow path: fetch any missing + SHA-verify all ──
+    log.info("weights.fullcheck.start fingerprint=%s", fingerprint[:16])
     for filename, meta in manifest["files"].items():
         local = weights_dir / filename
         if not local.exists():
@@ -91,3 +133,15 @@ def verify_weights(
                 f"actual={size}"
             )
         log.info("weights.verified file=%s sha=%s...", filename, expected[:16])
+
+    # Write the marker so the next boot can take the fast path.
+    try:
+        marker.write_text(json.dumps({
+            "fingerprint": fingerprint,
+            "version":     manifest.get("version"),
+            "file_count":  len(manifest["files"]),
+        }))
+        log.info("weights.marker.written fingerprint=%s", fingerprint[:16])
+    except OSError as e:
+        # Writing the marker is an optimization — don't fail the job over it.
+        log.warning("weights.marker.write_failed err=%s", e)

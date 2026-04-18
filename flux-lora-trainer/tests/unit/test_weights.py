@@ -94,3 +94,56 @@ class TestVerifyWeights:
         with pytest.raises(WeightParityError) as ei:
             verify_weights(manifest, wdir)
         assert "size mismatch" in str(ei.value)
+
+
+class TestFastPath:
+    def test_writes_marker_after_full_verify(self, fake_weights):
+        wdir, manifest = fake_weights
+        verify_weights(manifest, wdir)
+        marker = wdir / ".verified.json"
+        assert marker.exists()
+        body = json.loads(marker.read_text())
+        assert "fingerprint" in body
+        assert body["version"] == manifest["version"]
+        assert body["file_count"] == len(manifest["files"])
+
+    def test_second_call_takes_fast_path_without_hashing(self, fake_weights):
+        """If the fast path is taken, tampering a file's contents (but keeping
+        size) won't be detected — that's the whole point of the optimization."""
+        wdir, manifest = fake_weights
+        verify_weights(manifest, wdir)
+        f = next(iter(manifest["files"]))
+        body = (wdir / f).read_bytes()
+        # Overwrite with different content but same length → slow path would
+        # catch this via SHA; fast path (size+presence only) must not.
+        (wdir / f).write_bytes(b"X" * len(body))
+        verify_weights(manifest, wdir)  # no raise — fast path
+
+    def test_size_change_invalidates_fast_path(self, fake_weights):
+        wdir, manifest = fake_weights
+        verify_weights(manifest, wdir)
+        # Corrupt size only → fast path falls through to slow path → raises
+        f = next(iter(manifest["files"]))
+        (wdir / f).write_bytes(b"short")
+        with pytest.raises(WeightParityError):
+            verify_weights(manifest, wdir)
+
+    def test_missing_file_invalidates_fast_path(self, fake_weights):
+        wdir, manifest = fake_weights
+        verify_weights(manifest, wdir)
+        f = next(iter(manifest["files"]))
+        (wdir / f).unlink()
+        with pytest.raises(WeightParityError):
+            verify_weights(manifest, wdir)  # no fetcher → slow path raises
+
+    def test_manifest_fingerprint_change_forces_slow_path(self, fake_weights):
+        wdir, manifest = fake_weights
+        verify_weights(manifest, wdir)
+        # New manifest (different fingerprint) but same files on disk →
+        # slow path runs; since the new manifest's SHAs don't match the
+        # files on disk, it raises.
+        bumped = {**manifest, "files": dict(manifest["files"])}
+        f = next(iter(bumped["files"]))
+        bumped["files"][f] = {**bumped["files"][f], "sha256": "deadbeef" * 8}
+        with pytest.raises(WeightParityError):
+            verify_weights(bumped, wdir)
