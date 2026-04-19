@@ -89,7 +89,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "accelerate>=1.1,<2.0" \
         "transformers==4.57.3" \
         "torchao==0.10.0" \
-        "peft>=0.17.0"
+        "peft>=0.17.0" \
+        "bitsandbytes>=0.45.0"
 
 # Install the full FSDP-branch requirements_base.txt. Pins we care about
 # (transformers, torchao) are already at the right versions above and
@@ -100,10 +101,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 #     is too old and blows up with ImportError at train.py startup).
 #   - torchcodec, av, pytorch-wavelets, albumentations, etc. that the
 #     FSDP branch references but prod's Dockerfile doesn't install.
-# Letting pip see torch 2.6.0 already installed means requirements_base's
-# unpinned `accelerate` won't downgrade our pinned 1.x.
+# Pass --upgrade so requirements_base.txt's UNPINNED entries (bitsandbytes,
+# peft, accelerate, huggingface_hub, etc.) actually pull fresh versions
+# instead of keeping the torch-2.4-era pins the base image baked in. We
+# already enforce our own torch/torchvision/torchaudio + transformers/
+# torchao pins above, and pip's resolver will respect those.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
+    pip install --no-cache-dir --upgrade \
         -r /workspace/ai-toolkit/requirements_base.txt
 
 # ------------------------------------------------------------------
