@@ -93,21 +93,22 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "bitsandbytes>=0.45.0"
 
 # Install the full FSDP-branch requirements_base.txt. Pins we care about
-# (transformers, torchao) are already at the right versions above and
-# match what this file declares, so pip will be a no-op on them. The
-# critical adds are:
+# (transformers, torchao, peft, bitsandbytes, accelerate) are already at
+# the right versions in the explicit upgrade block above, so pip will
+# be a no-op on them. The critical adds are:
 #   - diffusers@072d15e (main-ish SHA — provides WanTransformer3DModel
 #     that toolkit/lora_special.py imports; the base image's diffusers
 #     is too old and blows up with ImportError at train.py startup).
 #   - torchcodec, av, pytorch-wavelets, albumentations, etc. that the
 #     FSDP branch references but prod's Dockerfile doesn't install.
-# Pass --upgrade so requirements_base.txt's UNPINNED entries (bitsandbytes,
-# peft, accelerate, huggingface_hub, etc.) actually pull fresh versions
-# instead of keeping the torch-2.4-era pins the base image baked in. We
-# already enforce our own torch/torchvision/torchaudio + transformers/
-# torchao pins above, and pip's resolver will respect those.
+# We deliberately do NOT pass --upgrade here. With --upgrade, pip's
+# resolver hit "resolution-too-deep" trying to find a consistent graph
+# across the ~30 unpinned entries plus our explicit pins. The explicit
+# bitsandbytes>=0.45.0 / peft>=0.17.0 pins above already force the two
+# upgrades that mattered (the rest of the unpinned entries are content
+# we genuinely don't care about beyond "any version that resolves").
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir --upgrade \
+    pip install --no-cache-dir \
         -r /workspace/ai-toolkit/requirements_base.txt
 
 # ------------------------------------------------------------------
