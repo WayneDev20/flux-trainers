@@ -88,7 +88,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir --upgrade \
         "accelerate>=1.1,<2.0" \
         "transformers==4.57.3" \
-        "torchao==0.10.0"
+        "torchao==0.10.0" \
+        "peft>=0.17.0"
 
 # Install the full FSDP-branch requirements_base.txt. Pins we care about
 # (transformers, torchao) are already at the right versions above and
