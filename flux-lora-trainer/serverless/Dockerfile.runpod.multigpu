@@ -146,6 +146,33 @@ print('scheduler.py patched (cosine_with_min_lr) on FSDP branch')
 PYEOF
 
 # ------------------------------------------------------------------
+# 3b. Patch DatasetConfig to initialize `sampling_weight`.
+#     PR #774's toolkit/data_loader.py:669 dereferences
+#     `ds.dataset_config.sampling_weight` inside _build_oversampled_concat_dataset,
+#     but DatasetConfig.__init__ never sets the attribute — smoke #5 crashed
+#     with AttributeError mid-training (after latents cached) because we
+#     don't emit sampling_weight in our config dict.
+#     Default to None so the data_loader takes the no-oversampling branch.
+# ------------------------------------------------------------------
+RUN python3 <<'PYEOF'
+path = '/workspace/ai-toolkit/toolkit/config_modules.py'
+with open(path) as f:
+    content = f.read()
+
+if 'sampling_weight' in content:
+    print('config_modules.py already has sampling_weight — skipping patch')
+else:
+    anchor = "self.type = kwargs.get('type', 'image')  # sd, slider, reference"
+    if anchor not in content:
+        raise SystemExit(f'ERROR: DatasetConfig anchor missing in {path}')
+    inject = anchor + "\n        # sampling_weight default (see Dockerfile.runpod.multigpu §3b)\n        self.sampling_weight = kwargs.get('sampling_weight', None)"
+    content = content.replace(anchor, inject, 1)
+    with open(path, 'w') as f:
+        f.write(content)
+    print('config_modules.py DatasetConfig patched (sampling_weight default)')
+PYEOF
+
+# ------------------------------------------------------------------
 # 4. Patch train.py so its pre/post-training file ops are rank-aware.
 #    ai-toolkit's CustomJob is rank-aware (PR #774 guards saves, samples,
 #    checkpointing). But train.py is Replicate's top-level wrapper and
