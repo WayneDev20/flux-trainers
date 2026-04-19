@@ -301,18 +301,32 @@ assert torchvision.__version__.startswith('0.21.'), f'torchvision={torchvision._
 assert torchaudio.__version__.startswith('2.6.'), f'torchaudio={torchaudio.__version__}'; \
 print(f'torch {torch.__version__} / torchvision {torchvision.__version__} / torchaudio {torchaudio.__version__}')" \
     && python -c "import sys; sys.path.insert(0, '/workspace/ai-toolkit'); \
-from toolkit.config_modules import AdapterConfig; \
-from diffusers import UNet2DConditionModel, PixArtTransformer2DModel, AuraFlowTransformer2DModel, WanTransformer3DModel; \
-print('ai-toolkit config + diffusers symbols OK')"
-# NOTE: we deliberately do NOT import SDTrainer here — its module body
-# transitively pulls diffusers.models.adapter → diffusers.quantizers.bitsandbytes
-# → bitsandbytes → triton, and triton tries to initialize a CUDA driver
-# at module-import time. GHA's ubuntu-latest runner has no GPU, so that
-# blows up with "0 active drivers". The checks above still catch the
-# two real regressions we hit (torchaudio version drift + missing
-# diffusers symbols like WanTransformer3DModel) by importing the exact
-# names train.py's startup chain needs, using diffusers' lazy module
-# loading to avoid instantiating the bitsandbytes/triton branches.
+from toolkit.config_modules import AdapterConfig" \
+    && python -c "import diffusers; names=set(); \
+[names.update(v) for v in diffusers._import_structure.values()]; \
+required=['UNet2DConditionModel','PixArtTransformer2DModel','AuraFlowTransformer2DModel','WanTransformer3DModel']; \
+missing=[c for c in required if c not in names]; \
+assert not missing, f'diffusers missing {missing}'; \
+print(f'diffusers {diffusers.__version__}: all required symbols present')"
+# NOTE on sanity check design: GHA's ubuntu-latest runner has no CUDA
+# device, so any import that eagerly materializes a diffusers module
+# body will blow up — diffusers.models.unet_2d_condition transitively
+# pulls diffusers.quantizers.bitsandbytes → bitsandbytes → triton →
+# driver init, and triton's _create_driver raises "0 active drivers"
+# when no GPU is present. Even `from diffusers import UNet2DConditionModel`
+# is NOT lazy enough: attribute access triggers _LazyModule to execute
+# the target module body.
+#
+# Workaround: check the `_import_structure` dict directly. That dict
+# is populated at diffusers.__init__ time (cheap — no module bodies
+# executed), and tells us which module exposes which class names.
+# So we can assert "the new diffusers exposes WanTransformer3DModel"
+# without ever loading it. This is the minimum we need to catch the
+# one real regression we hit on smoke #3.
+#
+# Anything below this line — bitsandbytes/triton init, SDTrainer
+# module body, actual model instantiation — has to fail on a paid
+# worker. Trade-off accepted.
 
 ENTRYPOINT []
 CMD ["python", "-u", "-m", "serverless.handler"]
