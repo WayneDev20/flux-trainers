@@ -1,0 +1,364 @@
+# syntax=docker/dockerfile:1.7
+# ============================================================
+# RunPod Serverless image — MULTI-GPU TRIAL (PR #774 FSDP v2).
+#
+# Goal: validate ai-toolkit's FSDP v2 multi-GPU support on cheap
+# hardware (2x RTX 4090) before committing to a prod H100 rollout.
+# Keep alongside Dockerfile.runpod so prod remains untouched.
+#
+# What this image does differently vs Dockerfile.runpod:
+#   1. Swaps /workspace/ai-toolkit (from replicate/flux-fine-tuner)
+#      with luke9705/ai-toolkit @ feature/fsdp-multi-gpu (PR #774).
+#      That branch adds toolkit/fsdp_utils.py + wires FSDP into
+#      BaseSDTrainProcess.py. Trigger: Accelerator.num_processes > 1.
+#   2. Upgrades `accelerate` to 1.x (FSDP v2 was added in 1.0+).
+#      Upgrades `transformers` to 4.57.3 (matches PR #774 pinning).
+#      Our base image had accelerate 0.33.0 / transformers 4.44.0.
+#   3. Re-applies the cosine_with_min_lr LambdaLR patch against the
+#      swapped-in scheduler.py. Target line is still present on the
+#      FSDP branch (verified 2026-04-18).
+#   4. Writes a default accelerate config so `accelerate launch`
+#      inside the handler works without an interactive prompt.
+#
+# Launch flow (new):
+#   handler.py calls torch.cuda.device_count() → passes as num_gpus
+#   → _training.build_argv wraps with `accelerate launch --num_processes=N
+#     --multi_gpu --mixed_precision=bf16` when N > 1.
+#   Single-GPU workers on this image behave identically to prod.
+#
+# Build (from repo root):
+#   docker build \
+#     -f serverless/Dockerfile.runpod.multigpu \
+#     --build-arg BASE_IMAGE=waynedev20/flux-lora-trainer:latest \
+#     --build-arg GIT_SHA=$(git rev-parse --short HEAD) \
+#     -t waynedev20/flux-lora-trainer-runpod:multigpu-v1 \
+#     .
+#
+# Push:
+#   docker push waynedev20/flux-lora-trainer-runpod:multigpu-v1
+#
+# Deploy (separate endpoint — do NOT touch the prod endpoint):
+#   gpuCount: 2
+#   gpuIds: RTX 4090 (or cheapest multi-GPU tier available)
+#   min_workers: 0  •  max_workers: 1  •  executionTimeout: 3600
+# ============================================================
+
+ARG BASE_IMAGE=ghcr.io/replace-me/flux-lora-trainer:latest
+FROM ${BASE_IMAGE}
+
+ARG GIT_SHA=unknown
+ARG FLUX_WEIGHTS_VERSION=v1
+
+# ------------------------------------------------------------------
+# 1. Swap ai-toolkit for the FSDP v2 branch.
+#    Pinned SHA (as of 2026-04-18) so rebuilds stay reproducible.
+# ------------------------------------------------------------------
+ARG AI_TOOLKIT_REPO=https://github.com/luke9705/ai-toolkit.git
+ARG AI_TOOLKIT_SHA=2cdfb16f9b83be2b352fff249ce4912663c97d19
+RUN rm -rf /workspace/ai-toolkit \
+ && git clone "${AI_TOOLKIT_REPO}" /workspace/ai-toolkit \
+ && cd /workspace/ai-toolkit \
+ && git checkout ${AI_TOOLKIT_SHA} \
+ && rm -rf .git
+
+# ------------------------------------------------------------------
+# 2. Upgrade deps needed by FSDP v2.
+#    - torch>=2.6 is a hard prerequisite (accelerate's FSDP2 plugin
+#      raises ImportError otherwise — see accelerate/utils/dataclasses.py
+#      __post_init__ check against FSDP2_PYTORCH_VERSION).
+#      Base image ships torch 2.4.1; we bump to 2.6.0 + matching
+#      torchvision 0.21.0 + torchaudio 2.6.0 on the cu124 wheel index
+#      (same CUDA the base image was built against, so driver/runtime
+#      pairing is preserved). torchaudio MUST be upgraded in lockstep —
+#      ai-toolkit/toolkit/config_modules.py imports it at module load,
+#      and pip will uninstall the old base-image torchaudio (pinned to
+#      torch 2.4) without auto-replacing it, yielding ModuleNotFoundError.
+#    - accelerate 1.x is required for fsdp_version=2 API.
+#    - transformers 4.57.3 matches PR #774's requirements_base.txt.
+#    - torchao is a hard dep of the FSDP branch requirements_base.txt;
+#      0.10.0 is the first release cut against torch 2.6.
+# ------------------------------------------------------------------
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir --upgrade \
+        --index-url https://download.pytorch.org/whl/cu124 \
+        --extra-index-url https://pypi.org/simple \
+        "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0"
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir --upgrade \
+        "accelerate>=1.1,<2.0" \
+        "transformers==4.57.3" \
+        "torchao==0.10.0" \
+        "peft>=0.17.0" \
+        "bitsandbytes>=0.45.0"
+
+# Install the full FSDP-branch requirements_base.txt. Pins we care about
+# (transformers, torchao, peft, bitsandbytes, accelerate) are already at
+# the right versions in the explicit upgrade block above, so pip will
+# be a no-op on them. The critical adds are:
+#   - diffusers@072d15e (main-ish SHA — provides WanTransformer3DModel
+#     that toolkit/lora_special.py imports; the base image's diffusers
+#     is too old and blows up with ImportError at train.py startup).
+#   - torchcodec, av, pytorch-wavelets, albumentations, etc. that the
+#     FSDP branch references but prod's Dockerfile doesn't install.
+# We deliberately do NOT pass --upgrade here. With --upgrade, pip's
+# resolver hit "resolution-too-deep" trying to find a consistent graph
+# across the ~30 unpinned entries plus our explicit pins. The explicit
+# bitsandbytes>=0.45.0 / peft>=0.17.0 pins above already force the two
+# upgrades that mattered (the rest of the unpinned entries are content
+# we genuinely don't care about beyond "any version that resolves").
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir \
+        -r /workspace/ai-toolkit/requirements_base.txt
+
+# ------------------------------------------------------------------
+# 3. Re-apply cosine_with_min_lr scheduler patch on the swapped-in
+#    ai-toolkit. Same patch body as base Dockerfile §7. Tolerate the
+#    target going missing so a future upstream refactor fails loud.
+# ------------------------------------------------------------------
+RUN python3 <<'PYEOF'
+path = '/workspace/ai-toolkit/toolkit/scheduler.py'
+with open(path) as f:
+    content = f.read()
+
+patch = '''    elif name == 'cosine_with_min_lr':
+        import math as _math
+        kwargs.pop('total_iters', None)
+        warmup = kwargs.get('num_warmup_steps', 0)
+        total  = kwargs.get('num_training_steps', 1000)
+        floor  = kwargs.get('min_lr_rate', 0.0)
+        def _lr_lambda(step, w=warmup, t=total, f=floor):
+            if step < w:
+                return step / max(1, w)
+            progress = (step - w) / max(1, t - w)
+            decay = 0.5 * (1.0 + _math.cos(_math.pi * progress))
+            return f + (1.0 - f) * decay
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
+'''
+
+target = '    else:\n        # try to use a diffusers scheduler'
+if target not in content:
+    raise SystemExit(f'ERROR: cosine_with_min_lr patch target missing in {path}')
+content = content.replace(target, patch + target)
+with open(path, 'w') as f:
+    f.write(content)
+print('scheduler.py patched (cosine_with_min_lr) on FSDP branch')
+PYEOF
+
+# ------------------------------------------------------------------
+# 3b. Patch DatasetConfig to initialize `sampling_weight`.
+#     PR #774's toolkit/data_loader.py:669 dereferences
+#     `ds.dataset_config.sampling_weight` inside _build_oversampled_concat_dataset,
+#     but DatasetConfig.__init__ never sets the attribute — smoke #5 crashed
+#     with AttributeError mid-training (after latents cached) because we
+#     don't emit sampling_weight in our config dict.
+#     Default to None so the data_loader takes the no-oversampling branch.
+# ------------------------------------------------------------------
+RUN python3 <<'PYEOF'
+path = '/workspace/ai-toolkit/toolkit/config_modules.py'
+with open(path) as f:
+    content = f.read()
+
+if 'sampling_weight' in content:
+    print('config_modules.py already has sampling_weight — skipping patch')
+else:
+    anchor = "self.type = kwargs.get('type', 'image')  # sd, slider, reference"
+    if anchor not in content:
+        raise SystemExit(f'ERROR: DatasetConfig anchor missing in {path}')
+    inject = anchor + "\n        # sampling_weight default (see Dockerfile.runpod.multigpu §3b)\n        self.sampling_weight = kwargs.get('sampling_weight', None)"
+    content = content.replace(anchor, inject, 1)
+    with open(path, 'w') as f:
+        f.write(content)
+    print('config_modules.py DatasetConfig patched (sampling_weight default)')
+PYEOF
+
+# ------------------------------------------------------------------
+# 4. Patch train.py so its pre/post-training file ops are rank-aware.
+#    ai-toolkit's CustomJob is rank-aware (PR #774 guards saves, samples,
+#    checkpointing). But train.py is Replicate's top-level wrapper and
+#    runs its clean_up / extract_zip / rename / tar on EVERY rank under
+#    `accelerate launch`, which either duplicates work (extract_zip) or
+#    crashes rank 1 with FileNotFoundError (post-training rename).
+#
+#    Patch strategy:
+#      - detect rank via LOCAL_RANK env var (set by accelerate launch)
+#      - rank 0 does setup (clean_up/download/extract) + marker, others wait
+#      - after job.run()+job.cleanup(), rank N>0 early-returns
+#      - rank 0 continues with wandb finish + file cleanup + tar + HF upload
+#
+#    Single-GPU behavior is unchanged (LOCAL_RANK=0, WORLD_SIZE=1).
+# ------------------------------------------------------------------
+RUN python3 <<'PYEOF'
+path = '/workspace/train.py'
+with open(path) as f:
+    content = f.read()
+
+# 1. Insert rank detection + marker helpers at start of train()
+old1 = 'def train(args):\n    output_path = str(SCRIPT_DIR / "trained-model.tar")'
+new1 = '''def train(args):
+    # ── Multi-GPU coordination (set by `accelerate launch --num_processes=N`) ─
+    import os as _os
+    from pathlib import Path as _Path
+    _LOCAL_RANK = int(_os.environ.get("LOCAL_RANK", "0"))
+    _WORLD_SIZE = int(_os.environ.get("WORLD_SIZE", "1"))
+    _IS_MAIN = (_LOCAL_RANK == 0)
+    _IS_DIST = (_WORLD_SIZE > 1)
+    _SETUP_MARKER = _Path("/tmp/.train_setup_done")
+
+    def _wait_marker(marker, timeout=600.0):
+        import time as _t
+        deadline = _t.time() + timeout
+        while not marker.exists() and _t.time() < deadline:
+            _t.sleep(0.5)
+        if not marker.exists():
+            raise TimeoutError(f"marker {marker} not set within {timeout}s on rank {_LOCAL_RANK}")
+
+    if _IS_DIST and _IS_MAIN and _SETUP_MARKER.exists():
+        _SETUP_MARKER.unlink()  # clean stale marker from a previous invocation
+
+    output_path = str(SCRIPT_DIR / "trained-model.tar")'''
+
+assert old1 in content, 'train.py multigpu patch: anchor 1 missing'
+content = content.replace(old1, new1)
+
+# 2. Gate pre-training setup on rank 0; other ranks skip + wait for marker
+old2 = '''    # ── 1. Clean state from previous runs (matches upstream) ─────────────────
+    clean_up()'''
+new2 = '''    # ── 1. Clean state from previous runs (matches upstream) ─────────────────
+    if _IS_MAIN:
+        clean_up()'''
+assert old2 in content, 'train.py multigpu patch: anchor 2 missing'
+content = content.replace(old2, new2)
+
+# 3. After extract_zip, rank 0 writes marker; others block on it
+old3 = '''    # ── 8. Extract training images ────────────────────────────────────────────
+    extract_zip(Path(args.input_images), INPUT_DIR)'''
+new3 = '''    # ── 8. Extract training images ────────────────────────────────────────────
+    if _IS_MAIN:
+        extract_zip(Path(args.input_images), INPUT_DIR)
+        _SETUP_MARKER.touch()
+    elif _IS_DIST:
+        _wait_marker(_SETUP_MARKER)'''
+assert old3 in content, 'train.py multigpu patch: anchor 3 missing'
+content = content.replace(old3, new3)
+
+# 4. After job.cleanup(), non-main ranks early-return; rank 0 continues
+old4 = '''    job.cleanup()
+
+    # ── 12. Post-training output cleanup (matches upstream exactly) ───────────'''
+new4 = '''    job.cleanup()
+
+    # Non-main ranks exit here; rank 0 handles wandb finish + file cleanup + tar.
+    if not _IS_MAIN:
+        return None
+
+    # ── 12. Post-training output cleanup (matches upstream exactly) ───────────'''
+assert old4 in content, 'train.py multigpu patch: anchor 4 missing'
+content = content.replace(old4, new4)
+
+# 5. wandb_client.finish() must run AFTER the non-main early return, so move
+#    the wandb finish call into the rank-0 block. Original position was before
+#    job.cleanup() — we leave it there but gate it so rank N>0 doesn't call finish.
+old5 = '''    if wandb_client:
+        wandb_client.finish()
+
+    job.cleanup()'''
+new5 = '''    if wandb_client and _IS_MAIN:
+        wandb_client.finish()
+
+    job.cleanup()'''
+assert old5 in content, 'train.py multigpu patch: anchor 5 missing'
+content = content.replace(old5, new5)
+
+with open(path, 'w') as f:
+    f.write(content)
+print('train.py patched (rank-aware pre/post training)')
+PYEOF
+
+# ------------------------------------------------------------------
+# 6. Pre-generate an accelerate config so `accelerate launch` inside
+#    the handler does not attempt an interactive prompt.
+#    This config is a sensible default; `accelerate launch` CLI flags
+#    from build_argv override num_processes / mixed_precision at runtime.
+# ------------------------------------------------------------------
+RUN mkdir -p /root/.cache/huggingface/accelerate \
+ && printf '%s\n' \
+    'compute_environment: LOCAL_MACHINE' \
+    'distributed_type: MULTI_GPU' \
+    'mixed_precision: bf16' \
+    'use_cpu: false' \
+    'num_machines: 1' \
+    'machine_rank: 0' \
+    'main_training_function: main' \
+    'downcast_bf16: no' \
+    'rdzv_backend: static' \
+    > /root/.cache/huggingface/accelerate/default_config.yaml
+
+# ------------------------------------------------------------------
+# 7. Serverless deps + handler (same as Dockerfile.runpod).
+# ------------------------------------------------------------------
+COPY serverless/requirements-serverless.txt /tmp/requirements-serverless.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir -r /tmp/requirements-serverless.txt \
+    && python -c "import importlib.util as u, sys; [sys.exit(f'{m} is installed — must be absent') for m in ('llava','deepspeed') if u.find_spec(m) is not None]" \
+    && rm /tmp/requirements-serverless.txt
+
+COPY serverless/ /workspace/serverless/
+
+ENV PYTHONPATH=/workspace \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    GIT_SHA=${GIT_SHA} \
+    FLUX_WEIGHTS_VERSION=${FLUX_WEIGHTS_VERSION} \
+    FLUX_WEIGHTS_DIR=/workspace/FLUX.1-dev \
+    ACCELERATE_LOG_LEVEL=info \
+    TOKENIZERS_PARALLELISM=false
+
+# ------------------------------------------------------------------
+# 8. Boot-time sanity check: FSDP v2 plugin must be importable, AND
+#    the ai-toolkit import chain that train.py hits on startup must
+#    resolve. Catches torch/{vision,audio} version mismatches from a
+#    partial upgrade — e.g. if torch bumps but torchaudio doesn't,
+#    pip silently uninstalls torchaudio and train.py blows up 6 min
+#    into a paid run. Fail at build time instead.
+# ------------------------------------------------------------------
+RUN python -c "from accelerate import FullyShardedDataParallelPlugin; \
+  FullyShardedDataParallelPlugin(fsdp_version=2, auto_wrap_policy='transformer_based_wrap', \
+    transformer_cls_names_to_wrap=['TestBlock'], reshard_after_forward=True, \
+    activation_checkpointing=False, cpu_ram_efficient_loading=True, state_dict_type='FULL_STATE_DICT')" \
+    && python -c "import sys; import accelerate; print(f'accelerate {accelerate.__version__}', file=sys.stderr)" \
+    && python -c "import torch, torchvision, torchaudio; \
+assert torch.__version__.startswith('2.6.'), f'torch={torch.__version__}'; \
+assert torchvision.__version__.startswith('0.21.'), f'torchvision={torchvision.__version__}'; \
+assert torchaudio.__version__.startswith('2.6.'), f'torchaudio={torchaudio.__version__}'; \
+print(f'torch {torch.__version__} / torchvision {torchvision.__version__} / torchaudio {torchaudio.__version__}')" \
+    && python -c "import sys; sys.path.insert(0, '/workspace/ai-toolkit'); \
+from toolkit.config_modules import AdapterConfig" \
+    && python -c "import diffusers; names=set(); \
+[names.update(v) for v in diffusers._import_structure.values()]; \
+required=['UNet2DConditionModel','PixArtTransformer2DModel','AuraFlowTransformer2DModel','WanTransformer3DModel']; \
+missing=[c for c in required if c not in names]; \
+assert not missing, f'diffusers missing {missing}'; \
+print(f'diffusers {diffusers.__version__}: all required symbols present')"
+# NOTE on sanity check design: GHA's ubuntu-latest runner has no CUDA
+# device, so any import that eagerly materializes a diffusers module
+# body will blow up — diffusers.models.unet_2d_condition transitively
+# pulls diffusers.quantizers.bitsandbytes → bitsandbytes → triton →
+# driver init, and triton's _create_driver raises "0 active drivers"
+# when no GPU is present. Even `from diffusers import UNet2DConditionModel`
+# is NOT lazy enough: attribute access triggers _LazyModule to execute
+# the target module body.
+#
+# Workaround: check the `_import_structure` dict directly. That dict
+# is populated at diffusers.__init__ time (cheap — no module bodies
+# executed), and tells us which module exposes which class names.
+# So we can assert "the new diffusers exposes WanTransformer3DModel"
+# without ever loading it. This is the minimum we need to catch the
+# one real regression we hit on smoke #3.
+#
+# Anything below this line — bitsandbytes/triton init, SDTrainer
+# module body, actual model instantiation — has to fail on a paid
+# worker. Trade-off accepted.
+
+ENTRYPOINT []
+CMD ["python", "-u", "-m", "serverless.handler"]

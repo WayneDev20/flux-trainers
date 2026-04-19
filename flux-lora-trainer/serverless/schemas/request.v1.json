@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flux-lora-trainer.local/schemas/request.v1.json",
+  "title": "FLUX LoRA training request (v1)",
+  "description": "Frozen request contract per ADR-0004. Bump to v2/ for breaking changes.",
+  "type": "object",
+  "required": ["job_id", "user_id", "dataset_r2_key", "trigger_word", "captions", "config"],
+  "additionalProperties": false,
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "description": "UUID v4. Idempotency key."
+    },
+    "user_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+    },
+    "dataset_r2_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Key within avatar-datasets bucket. No scheme, no parent refs, no absolute paths."
+    },
+    "captions": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Required. Map filename -> caption. MUST cover every image in the zip (ADR-0004 revised — LLaVA in-process autocaption removed; captioning is owned by tools/caption_dataset.py in avatar-backend).",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "trigger_word": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$",
+      "description": "Single identifier token. Passed to train.py --trigger_word."
+    },
+    "webhook_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "HTTPS URL of avatar-backend completion receiver. HMAC-signed payload posted on finish."
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps", "lora_rank", "learning_rate", "batch_size",
+                   "resolution", "optimizer", "caption_dropout_rate", "gpu_tier"],
+      "properties": {
+        "steps":                { "type": "integer", "minimum": 100, "maximum": 10000 },
+        "lora_rank":            { "type": "integer", "minimum": 1,   "maximum": 128 },
+        "learning_rate":        { "type": "number",  "minimum": 1e-6, "maximum": 1e-2 },
+        "batch_size":           { "type": "integer", "minimum": 1,   "maximum": 8 },
+        "resolution":           { "type": "string",  "pattern": "^[0-9]{3,4}(,[0-9]{3,4}){0,4}$" },
+        "optimizer":            {
+          "type": "string",
+          "enum": ["prodigy", "adam8bit", "adamw8bit", "lion8bit",
+                   "adam", "adamw", "lion", "adagrad", "adafactor"]
+        },
+        "caption_dropout_rate": { "type": "number",  "minimum": 0.0, "maximum": 0.5 },
+        "gpu_tier":             {
+          "type": "string",
+          "enum": ["a100_80gb", "h100_80gb", "h200_141gb"]
+        }
+      }
+    }
+  }
+}

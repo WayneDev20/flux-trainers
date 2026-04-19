@@ -56,27 +56,21 @@ hf_transfer==0.1.8
 sentencepiece==0.2.0
 tokenizers==0.19
 
-# --- LLaVA captioner deps ---
-deepspeed==0.9.5
-einops-exts==0.0.4
-shortuuid==1.0.11
-markdown2==2.4.10
-wavedrom==2.0.3.post3
-Pygments==2.16.1
-
-# LLaVA itself (install from source)
-# pip install git+https://github.com/haotian-liu/LLaVA.git
-
 # --- ai-toolkit extras (not in cog.yaml but required by ai-toolkit internals) ---
 k-diffusion
 invisible-watermark
 pytorch_fid
 python-dotenv
+Pygments==2.16.1
 
 # --- Logging ---
 wandb==0.17.8
 
 # --- Misc ---
 numpy==1.26.0
-pydantic==1.10.17
 httpx==0.24.0
+
+# --- Captioning ---
+# Captioning is handled out-of-image by tools/caption_dataset.py (Claude
+# Sonnet via Anthropic API, GPT / Gemini fallback). The LLaVA / deepspeed
+# in-process captioner was removed — see Dockerfile header for rationale.

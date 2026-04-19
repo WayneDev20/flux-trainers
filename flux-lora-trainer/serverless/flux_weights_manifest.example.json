@@ -1,0 +1,14 @@
+{
+  "_note": "EXAMPLE ONLY. Real manifest is produced by mirror_flux_weights.py and named flux_weights_manifest.json (not committed until you run the mirror).",
+  "version": "v1",
+  "source": "https://weights.replicate.delivery/default/black-forest-labs/FLUX.1-dev/files.tar",
+  "mirror_bucket": "flux-weights-mirror",
+  "mirror_prefix": "v1/",
+  "snapshot_date": "2026-04-17",
+  "files": {
+    "flux1-dev.safetensors":  { "sha256": "REPLACE_WITH_REAL_SHA256", "bytes": 0 },
+    "ae.safetensors":         { "sha256": "REPLACE_WITH_REAL_SHA256", "bytes": 0 },
+    "t5xxl_fp16.safetensors": { "sha256": "REPLACE_WITH_REAL_SHA256", "bytes": 0 },
+    "clip_l.safetensors":     { "sha256": "REPLACE_WITH_REAL_SHA256", "bytes": 0 }
+  }
+}

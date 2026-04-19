@@ -1,0 +1,41 @@
+[project]
+name = "flux-lora-trainer-serverless"
+version = "0.1.0"
+description = "RunPod Serverless handler for per-user FLUX LoRA training"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+markers = [
+    "smoke: manual GPU smoke tests (excluded from CI via -m 'not smoke')",
+]
+
+[tool.coverage.run]
+source = ["serverless"]
+omit = [
+    # Paths that require CUDA / a real GPU — exercised only in smoke
+    "serverless/handler.py:runpod_start",
+    # One-time bootstrap CLI, run from laptop against real R2
+    "serverless/mirror_flux_weights.py",
+    # Manual dev tool; calls real Anthropic API, covered by smoke runs
+    "tools/caption_dataset.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+fail_under = 90
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true

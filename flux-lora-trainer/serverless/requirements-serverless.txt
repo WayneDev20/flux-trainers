@@ -1,0 +1,24 @@
+# Serverless-layer deps only. Base image already has torch/diffusers/ai-toolkit.
+# Pin everything — we're chasing parity, not freshness.
+runpod==1.7.2
+boto3==1.35.20
+botocore==1.35.20
+requests==2.32.3
+jsonschema==4.23.0
+sentry-sdk==2.14.0
+
+# runpod 1.7.2 declares fastapi[all]>=0.94.0 with a loose graph. Without
+# these lower bounds pip's 2020 resolver backtracks for 40 minutes into
+# `resolution-too-deep` trying to reconcile fastapi-cli, email-validator,
+# dnspython, sniffio, etc. Pinning the biggest offenders collapses the
+# search space and makes installs deterministic.
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+fastapi-cli==0.0.5
+email-validator==2.2.0
+dnspython==2.7.0
+sniffio==1.3.1
+exceptiongroup==1.2.2
+python-multipart==0.0.12
+orjson==3.10.7
+ujson==5.10.0

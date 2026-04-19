@@ -1,0 +1,39 @@
+# Secrets — NEVER commit
+.env
+.env.*
+!.env.example
+.envrc
+!.envrc.example
+*.pem
+*.key
+secrets/
+
+# Local caches + builds
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Local FLUX weight caches (never commit 24GB of weights)
+FLUX.1-dev/
+flux-cache/
+*.safetensors
+*.tar
+*.zip
+!tests/fixtures/*.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+._*
