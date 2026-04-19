@@ -424,6 +424,20 @@ def train(args):
             log.info("Turning gradient checkpointing on; training resolution greater than 1024x1024")
             gradient_checkpointing = True
 
+    # ── 4b. FSDP v2 multi-GPU override ────────────────────────────────────────
+    # ai-toolkit BaseSDTrainProcess.prepare_accelerator() raises ValueError if
+    # quantize=True is combined with FSDP v2 — sharding already reduces per-GPU
+    # memory, so quantization is both unnecessary and forbidden. Detect
+    # multi-process launch via accelerate's WORLD_SIZE env and force off.
+    _world_size = int(os.environ.get("WORLD_SIZE", "1") or "1")
+    if _world_size > 1 and quantize:
+        log.info(
+            "Multi-GPU run detected (WORLD_SIZE=%s); disabling transformer quantization "
+            "— FSDP v2 shards the transformer across ranks instead.",
+            _world_size,
+        )
+        quantize = False
+
     # ── 5. Build train config (upstream builds config BEFORE W&B client) ──────
     train_config = build_train_config(
         args, resolutions, sample_prompts, quantize, gradient_checkpointing, layers_to_optimize
